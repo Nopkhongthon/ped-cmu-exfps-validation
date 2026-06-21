@@ -1,0 +1,32 @@
+# =============================================================================
+# Patient data must never be committed to this repository.
+# The de-identified datasets are available from the corresponding author on
+# reasonable request and should be placed in a local `data/` folder.
+# =============================================================================
+
+# Data (all formats)
+data/
+*.xlsx
+*.xls
+*.csv
+*.dta
+*.sav
+*.rds
+*.RData
+
+# Generated output (tables, figures, exported data)
+output/
+*.docx
+*.pdf
+*.png
+*.tiff
+*.tif
+
+# R session / IDE cruft
+.Rhistory
+.Rapp.history
+.RData
+.Ruserdata
+.Rproj.user/
+*.Rproj
+.DS_Store
