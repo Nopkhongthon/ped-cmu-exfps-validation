@@ -3,8 +3,8 @@
 # Failure Predictive Score (Ped-CMU ExFPS)
 #
 # Companion analysis script for the manuscript:
-#   "Predicting Extubation Failure in Pediatric Cardiac Patients: External
-#    Validation and Practice Adherence to the Ped-CMU ExFPS"
+#   "External Validation of the Ped-CMU Extubation Failure Predictive Score and
+#    Clinician Adherence in Pediatric Cardiac Patients"
 #
 # This script reproduces, top to bottom:
 #   1. Data import and harmonisation of the development and external-validation
@@ -77,6 +77,18 @@ format_pvalue <- function(p) {
 
 df     <- readxl::read_xlsx(file.path(data_dir, "external_validation_dataset.xlsx"))
 df_dev <- readxl::read_xlsx(file.path(data_dir, "development_dataset.xlsx"), sheet = "Sheet1")
+
+# One validation record (record_id 71, an infant aged 5.7 months) has body
+# weight and height entered in each other's fields (58 kg, 3.8 cm). Swap them
+# back to 3.8 kg and 58 cm and recompute body-mass index with height in metres.
+df <- df |>
+  dplyr::mutate(
+    bw_raw = bw,
+    bw     = dplyr::if_else(record_id == 71, ht, bw),
+    ht     = dplyr::if_else(record_id == 71, bw_raw, ht),
+    bmi    = dplyr::if_else(record_id == 71, bw / (ht / 100)^2, as.numeric(bmi)),
+    bw_raw = NULL
+  )
 
 # Direct identifiers are dropped. These are no-ops on the de-identified data and
 # simply document the de-identification step.
@@ -158,11 +170,13 @@ df_member <- df_member |>
     hx_reintu = dplyr::if_else(hx_reintu == 2, 1, hx_reintu)
   )
 
-# Ped-CMU ExFPS score and its linear predictor.
+# Ped-CMU ExFPS score and its linear predictor. cyanosis is coded 0/1/2, so
+# acyanosis is cyanosis == 1 (+1 point) and cyanosis with SpO2 > 85% is
+# cyanosis == 2 (+6 points).
 df_member <- df_member |>
   dplyr::mutate(
     score    = (10 * hx_reintu) + (4 * pneumonia) +
-               (1 * (cyanosis == 2)) + (6 * (cyanosis == 3)),
+               (1 * (cyanosis == 1)) + (6 * (cyanosis == 2)),
     lp_score = -3.286 + (0.231 * score)
   )
 
@@ -176,10 +190,6 @@ table1 <- df_member |>
     pneumonia, hx_reintu, `Mx 2 steriod`, balance_kg, outcome_of_extubation, death
   ) |>
   dplyr::mutate(
-    # Correct two data-entry artefacts (a mis-scaled body weight and the
-    # body-mass index values it propagated to).
-    bw  = dplyr::if_else(bw == 3.8, 38, bw),
-    bmi = dplyr::if_else(bmi > 100, bw / (ht)^2, bmi),
     genetic_c = factor(
       genetic_c,
       levels = 1:5,
@@ -196,7 +206,7 @@ table1 <- df_member |>
     )
   ) |>
   dplyr::rename(
-    "Age (year)"                                 = "age_extumo",
+    "Age (month)"                                = "age_extumo",
     "Male"                                       = "sex",
     "Body weight (kg)"                           = "bw",
     "Height (cm)"                                = "ht",
@@ -241,7 +251,7 @@ table1 <- df_member |>
   )
 
 table1
-gtsave(gtsummary::as_gt(table1), filename = file.path(output_dir, "table3.docx"))
+gtsave(gtsummary::as_gt(table1), filename = file.path(output_dir, "table1_baseline.docx"))
 
 
 # ---- 4. Table 2: score and linear-predictor distribution --------------------
@@ -271,7 +281,7 @@ table2 <- df_member |>
   )
 
 table2
-gtsave(gtsummary::as_gt(table2), filename = file.path(output_dir, "table4.docx"))
+gtsave(gtsummary::as_gt(table2), filename = file.path(output_dir, "table2_score_distribution.docx"))
 
 
 # ---- 5. Table 3: predictor-outcome associations, dev vs. val ----------------
@@ -337,7 +347,7 @@ table3 <- gtsummary::tbl_merge(
   )
 
 table3
-gtsave(gtsummary::as_gt(table3), filename = file.path(output_dir, "table6.docx"))
+gtsave(gtsummary::as_gt(table3), filename = file.path(output_dir, "table3_predictor_outcome.docx"))
 
 
 # ---- 6. Case-mix dissimilarity: membership model ----------------------------
@@ -363,16 +373,18 @@ ggplot(df_member, aes(x = lp_score, fill = factor(dataset), group = factor(datas
   labs(x = "Linear predictor", y = "Density", fill = "Dataset") +
   theme_classic(base_size = 12)
 
-# Membership model: how well the predictors distinguish the two datasets.
+# Membership model: how well the predictors and the outcome distinguish the two
+# datasets (Debray et al. 2015). The response is dataset membership, so the ROC
+# is scored against dataset, not against extubation failure.
 member_model <- glm(
-  dataset ~ hx_reintu + pneumonia + factor(cyanosis) + `Event of extubation`,
+  dataset ~ hx_reintu + pneumonia + factor(cyanosis) + outcome_of_extubation,
   family = binomial(link = "logit"),
   data = df_member
 )
 broom::tidy(member_model, conf.int = TRUE)
 
 case_mix_roc <- pROC::roc(
-  response  = df_member$outcome_of_extubation,
+  response  = df_member$dataset,
   predictor = predict(member_model, type = "response"),
   ci = TRUE
 )
@@ -472,6 +484,10 @@ roc_compare_plot <- pROC::ggroc(list(Development = roc_dev, Validation = roc_val
   guides(color = guide_legend(ncol = 1))
 roc_compare_plot
 ggsave(file.path(output_dir, "roc_eval.pdf"), roc_compare_plot)
+# Figure 2 for the manuscript: 300 dpi LZW TIFF (ragg writes the dpi header).
+ggsave(file.path(output_dir, "figure2_roc.tiff"), roc_compare_plot,
+       device = ragg::agg_tiff, width = 939 / 220, height = 939 / 220,
+       units = "in", dpi = 300, compression = "lzw")
 
 
 # ---- 8. Calibration ---------------------------------------------------------
@@ -547,8 +563,8 @@ calibration_plot <- ggplot() +
              size = 2.5) +
   geom_errorbar(data = bin_stats, aes(x = exp, ymin = lci, ymax = uci,
                 colour = "Grouped observations"), width = 0.02) +
-  # Slope and CITL annotation.
-  annotate("text", x = 0.8, y = 0.1,
+  # Slope and CITL annotation, right-aligned so it stays inside the panel.
+  annotate("text", x = 1, y = 0.12, hjust = 1, size = 3.2,
            label = sprintf("Slope: %.2f (%.2f, %.2f)\nCITL: %.2f (%.2f, %.2f)",
                            cal_slope$slope, cal_slope$lci, cal_slope$uci,
                            cal_citl$citl, cal_citl$lci, cal_citl$uci)) +
@@ -565,7 +581,7 @@ calibration_plot <- ggplot() +
   scale_x_continuous(limits = c(0, 1), breaks = seq(0, 1, 0.2), expand = c(0.01, 0.01)) +
   scale_y_continuous(limits = c(-0.1, 1), breaks = seq(0, 1, 0.2), expand = c(0.01, 0.01)) +
   labs(x = "Predicted probability", y = "Observed proportion", title = "Calibration plot") +
-  theme_minimal(base_size = 12) +
+  theme_minimal(base_size = 10) +
   theme(
     panel.grid.major  = element_blank(),
     panel.grid.minor  = element_blank(),
@@ -576,20 +592,23 @@ calibration_plot <- ggplot() +
     axis.text         = element_text(colour = "black"),
     plot.title        = element_text(hjust = 0.5, face = "bold"),
     aspect.ratio      = 1,
-    legend.position   = "bottom"
+    # Legend to the right: the figure is wider than it is tall.
+    legend.position   = "right"
   )
 calibration_plot
 ggsave(file.path(output_dir, "calibration_plot.pdf"), calibration_plot)
+# Figure 3 for the manuscript: 300 dpi LZW TIFF.
+ggsave(file.path(output_dir, "figure3_calibration.tiff"), calibration_plot,
+       device = ragg::agg_tiff, width = 1430 / 220, height = 884 / 220,
+       units = "in", dpi = 300, compression = "lzw")
 
 
 # ---- 9. Table 4: diagnostic indices at the cut-off (score >= 5) -------------
 
-# Re-derive the score with the published weights (acyanosis +1, cyanosis +6)
-# and dichotomise at the pre-specified high-risk cut-off of 5.
+# Use the score from section 2 and dichotomise at the pre-specified high-risk
+# cut-off of 5.
 df_diag <- df_member |>
   dplyr::mutate(
-    score   = (10 * hx_reintu) + (4 * pneumonia) +
-              (1 * (cyanosis == 1)) + (6 * (cyanosis == 2)),
     disease = factor(outcome_of_extubation, levels = c(1, 0)),
     test    = factor(dplyr::if_else(score >= 5, 1, 0), levels = c(1, 0))
   ) |>
@@ -626,7 +645,7 @@ table4 <- dplyr::bind_rows(
   gt::gt()
 
 table4
-gtsave(table4, filename = file.path(output_dir, "table7.docx"))
+gtsave(table4, filename = file.path(output_dir, "table4_diagnostic_indices.docx"))
 
 # Export the pooled, cleaned dataset (Stata format) for downstream use.
 haven::write_dta(janitor::clean_names(df_member), file.path(output_dir, "data.dta"))
@@ -887,6 +906,41 @@ mgmt_overall_plot <- ggplot(mgmt_summary, aes(x = get_mx, y = proportion, fill =
     axis.text    = element_text(size = 10)
   )
 mgmt_overall_plot
+
+
+# ---- 12. Checks and saved results -------------------------------------------
+
+# Cohort sizes, event counts and Table 4 are not affected by the score or
+# membership-model corrections, so a rerun must reproduce them exactly.
+stopifnot(
+  sum(df_member$dataset == 0) == 352,
+  sum(df_member$dataset == 1) == 142,
+  sum(df_member$outcome_of_extubation[df_member$dataset == 0]) == 40,
+  sum(df_member$outcome_of_extubation[df_member$dataset == 1]) == 11,
+  round(diag_val$detail$est[diag_val$detail$statistic == "se"], 4) == 0.8182,
+  round(diag_val$detail$est[diag_val$detail$statistic == "pv.neg"], 4) == 0.9778
+)
+
+# Every number quoted in the manuscript, in one place.
+results <- list(
+  membership_auroc = as.numeric(case_mix_roc$ci),
+  score_by_dataset = df_member |>
+    dplyr::group_by(dataset) |>
+    dplyr::summarise(
+      score_mean = mean(score), score_sd = sd(score),
+      lp_mean = mean(lp_score), lp_sd = sd(lp_score),
+      .groups = "drop"
+    ),
+  score_ttest_p  = t.test(score ~ dataset, data = df_member)$p.value,
+  auroc_val      = as.numeric(roc_val$ci),
+  auroc_dev      = as.numeric(roc_dev$ci),
+  cal_slope      = cal_slope,
+  cal_citl       = cal_citl,
+  mean_predicted = mean(cal$pred),
+  observed_rate  = mean(cal$obs),
+  table4         = table4
+)
+saveRDS(results, file.path(output_dir, "results.rds"))
 
 # =============================================================================
 # End of script

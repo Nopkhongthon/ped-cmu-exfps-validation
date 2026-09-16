@@ -2,8 +2,8 @@
 
 Reproducible analysis code for the manuscript:
 
-> **Predicting Extubation Failure in Pediatric Cardiac Patients: External
-> Validation and Practice Adherence to the Ped-CMU ExFPS**
+> **External Validation of the Ped-CMU Extubation Failure Predictive Score and
+> Clinician Adherence in Pediatric Cardiac Patients**
 
 This repository contains the R script that reproduces the external-validation
 analyses of the **Paediatric Chiang Mai University Extubation Failure Predictive
