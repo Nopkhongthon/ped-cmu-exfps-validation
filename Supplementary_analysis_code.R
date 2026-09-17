@@ -40,8 +40,6 @@
 
 # Edit these two lines to point at the folder holding the (de-identified) data
 # and the desired output location, then run the script top to bottom.
-# The de-identified datasets are available from the corresponding author on
-# reasonable request.
 data_dir   <- "data"      # folder containing the .xlsx datasets
 output_dir <- "output"    # folder for tables, figures and exported data
 
